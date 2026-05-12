@@ -1,0 +1,28 @@
+# Dependencies
+/vendor/
+
+# Environment
+.env
+.env.local
+
+# IDE / nástroje
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PHP error logs
+*.log
+error_log
+
+# Compiled assets
+/public/build/
+
+# Database dumps
+*.sql
+*.dump
