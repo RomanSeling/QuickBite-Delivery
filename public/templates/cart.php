@@ -2,9 +2,6 @@
 require_once __DIR__ . '/../../app/core/App.php';
 App::init();
 
-// Úspešne odoslaná objednávka — PRG vzor
-$objednane = (int)($_GET['objednane'] ?? 0);
-
 $cart    = $_SESSION['cart'] ?? null;
 $items   = $cart['items'] ?? [];
 $orderOk = false;
@@ -20,19 +17,25 @@ $navCount    = $itemCount;
 
 // Handle order placement
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
+    Helper::log("DEBUG: Order placement code reached");
 
     if (!Auth::check()) {
         $error = 'Pre dokončenie objednávky sa musíte prihlásiť.';
+        Helper::log("DEBUG: Error - user not authenticated");
 
     } elseif (!Auth::isCustomer()) {
-        $error = 'Objednavku moze vytvorit iba zakaznicky ucet.';
+        $error = 'Objednávku môže vytvoriť iba zákaznícky účet.';
+        Helper::log("DEBUG: Error - user is not customer");
 
     } elseif (empty($items)) {
         $error = 'Košík je prázdny.';
+        Helper::log("DEBUG: Error - cart is empty");
 
     } else {
         try {
-            $db   = (new Database())->getConnection();
+            $db = (new Database())->getConnection();
+
+            // Zákaznícky profil
             $stmt = $db->prepare("SELECT id, adresa FROM zakaznici WHERE user_id = :uid");
             $stmt->execute(['uid' => Auth::id()]);
             $zakaznikRow = $stmt->fetch();
@@ -44,64 +47,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
                 $platba          = in_array($platbaRaw, ['karta', 'hotovost', 'apple_pay'], true) ? $platbaRaw : 'karta';
                 $adresaDorucenia = trim($_POST['delivery_address'] ?? $zakaznikRow->adresa ?? '');
                 $poznamka        = trim($_POST['note'] ?? '');
-                $restauraciaId   = (int)($cart['restauracia_id'] ?? 0);
+
+                // Zisti restauraciaId z košíka alebo z prvej položky
+                $restauraciaId = (int)($cart['restauracia_id'] ?? 0);
                 if ($restauraciaId <= 0) {
-                    $firstItemKey = array_key_first($items);
-                    $restauraciaId = (int)($items[$firstItemKey]['restauracia_id'] ?? 0);
+                    $firstItem     = reset($items);
+                    $restauraciaId = (int)($firstItem['restauracia_id'] ?? 0);
                 }
 
                 if ($restauraciaId <= 0) {
-                    $error = 'Objednavka nema vybranu restauraciu. Pridajte prosim polozku znova.';
+                    $error = 'Objednávka nemá priradenú reštauráciu. Pridajte položky znova.';
+                    Helper::log("DEBUG: Error - no restaurant ID");
                 } else {
-                    $polozky = implode(', ', array_map(
-                        static fn(array $i): string => trim(($i['name'] ?? 'Polozka') . ' x' . (int)($i['qty'] ?? 1)),
+                    Helper::log("DEBUG: About to create order - zakaznik_id: " . $zakaznikRow->id . ", restauracia_id: $restauraciaId, suma: $total");
+
+                    $polozkyText = implode(', ', array_map(
+                        static fn(array $i): string => trim(($i['name'] ?? 'Položka') . ' x' . (int)($i['qty'] ?? 1)),
                         array_values($items)
                     ));
 
-                    $db->beginTransaction();
-
-                    $ins = $db->prepare(
-                        "INSERT INTO objednavky (zakaznik_id, restauracia_id, polozky, suma, platba, adresa_dorucenia, poznamka)
-                         VALUES (:zid, :rid, :polozky, :suma, :platba, :adresa, :poznamka)"
+                    $objednavka = new Objednavka();
+                    $orderId = $objednavka->createAndReturnId(
+                        (int)$zakaznikRow->id,
+                        $restauraciaId,
+                        null,
+                        $polozkyText,
+                        (float)$total,
+                        $platba,
+                        'nova',
+                        $adresaDorucenia,
+                        $poznamka
                     );
-                    $ins->execute([
-                        'zid'     => $zakaznikRow->id,
-                        'rid'     => $restauraciaId,
-                        'polozky' => $polozky,
-                        'suma'    => $total,
-                        'platba'  => $platba,
-                        'adresa'  => $adresaDorucenia,
-                        'poznamka'=> $poznamka,
-                    ]);
 
-                    $orderId = (int)$db->lastInsertId();
+                    if ($orderId === false) {
+                        $error = 'Objednavku sa nepodarilo ulozit. Skuste to prosim znova.';
+                        Helper::log("DEBUG: Error - order create failed");
+                    } else {
+                        Helper::log("DEBUG: Order inserted successfully - orderId: $orderId");
 
-                    $insItem = $db->prepare(
-                        "INSERT INTO polozky_objednavky (objednavka_id, produkt_id, nazov, mnozstvo, cena)
-                         VALUES (:oid, :pid, :nazov, :mnozstvo, :cena)"
-                    );
-                    foreach ($items as $item) {
-                        $insItem->execute([
-                            'oid'     => $orderId,
-                            'pid'     => (int)($item['id'] ?? 0) ?: null,
-                            'nazov'   => $item['name'] ?? 'Položka',
-                            'mnozstvo'=> (int)($item['qty'] ?? 1),
-                            'cena'    => (float)($item['price'] ?? 0),
-                        ]);
+                        if (!$objednavka->createItems($orderId, $items)) {
+                            Helper::log("cart.php polozky ERROR (orderId=$orderId): detailne polozky sa nepodarilo ulozit");
+                        }
+
+                        $_SESSION['cart'] = null;
+                        Helper::log("DEBUG: Cart cleared, about to redirect to order-success.php");
+                        Redirect::redirect('order-success.php?id=' . $orderId);
                     }
-
-                    $db->commit();
-                    $_SESSION['cart'] = null;
-                    // PRG — zabraňuje duplikátnej objednávke pri F5
-                    Redirect::redirect('cart.php?objednane=' . $orderId);
                 }
             }
         } catch (PDOException $e) {
-            if (isset($db) && $db->inTransaction()) {
-                $db->rollBack();
-            }
-            Helper::log("cart.php order ERROR: " . $e->getMessage());
-            $error = 'Nastala chyba pri ukladaní objednávky. Skúste prosím znova.';
+            Helper::log("cart.php order PDOException ERROR: " . $e->getMessage());
+            $error = 'Nastala chyba pri ukladaní objednávky: ' . $e->getMessage();
+        } catch (Exception $e) {
+            Helper::log("cart.php order Exception ERROR: " . $e->getMessage());
+            $error = 'Nezpracovaná chyba: ' . $e->getMessage();
         }
     }
 }
@@ -224,21 +223,24 @@ $itemCount = array_sum(array_column($items, 'qty'));
           <?php endforeach; ?>
         </div>
 
-        <!-- Note -->
-        <div class="card mt-3">
-          <div class="card-body">
-            <div class="form-group" style="margin-bottom:0;">
-              <label class="form-label">📝 Poznámka pre reštauráciu</label>
-              <textarea class="form-control" name="note" form="orderForm" placeholder="Napr. bez cibule, extra omáčka..." style="min-height:80px;"></textarea>
-            </div>
-          </div>
-        </div>
+        <!-- Note - MOVED INSIDE FORM -->
+        <!-- Note section will be moved inside the form -->
       </div>
 
       <!-- ── Order summary ── -->
       <div>
-        <form method="POST" id="orderForm">
+        <form method="POST" id="cartOrderForm">
           <input type="hidden" name="place_order" value="1">
+
+          <!-- Note -->
+          <div class="card" style="margin-bottom:1.25rem;">
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label">📝 Poznámka pre reštauráciu</label>
+                <textarea class="form-control" name="note" placeholder="Napr. bez cibule, extra omáčka..." style="min-height:80px;"></textarea>
+              </div>
+            </div>
+          </div>
 
           <div class="order-summary-card">
             <div class="order-summary-header">
@@ -300,13 +302,18 @@ $itemCount = array_sum(array_column($items, 'qty'));
                 </div>
               </div>
 
+              <?php if (Auth::check() && Auth::isCustomer()): ?>
               <button type="submit" class="btn btn-primary w-100"
                       style="justify-content:center;padding:.8rem;font-size:.95rem;">
                 🛵 Objednať za <?= number_format($total, 2, ',', ' ') ?> €
               </button>
-              <?php if (!Auth::check()): ?>
+              <?php else: ?>
+              <a href="login.php?redirect=cart.php" class="btn btn-primary w-100"
+                 style="justify-content:center;padding:.8rem;font-size:.95rem;text-decoration:none;">
+                🔒 Prihlásiť sa a objednať
+              </a>
               <p style="font-size:.75rem;text-align:center;margin-top:.6rem;color:var(--warning);">
-                ⚠️ Pre dokončenie objednávky sa musíte <a href="login.php">prihlásiť</a>.
+                ⚠️ Pre dokončenie objednávky sa musíte <a href="login.php?redirect=cart.php">prihlásiť</a>.
               </p>
               <?php endif; ?>
             </div>
@@ -330,25 +337,6 @@ $itemCount = array_sum(array_column($items, 'qty'));
   <?php endif; ?>
 </main>
 
-<!-- Order success modal (PRG – zobrazí sa po redirect s ?objednane=ID) -->
-<?php if ($objednane > 0): ?>
-<div class="modal-overlay" id="orderSuccessModal" style="display:flex;">
-  <div class="modal" style="max-width:420px;text-align:center;">
-    <div class="modal-body" style="padding:2.5rem 2rem;">
-      <div style="font-size:4rem;margin-bottom:1rem;">🎉</div>
-      <h3 style="color:var(--gray-900);margin-bottom:.75rem;">Objednávka prijatá!</h3>
-      <p style="margin-bottom:1.5rem;">Vaša objednávka č. <strong>#<?= $objednane ?></strong> bola úspešne odoslaná. Čas doručenia: <strong>25–35 min</strong>.</p>
-      <a href="moje-objednavky.php" class="btn btn-primary" style="justify-content:center;width:100%;padding:.75rem;margin-bottom:.6rem;">
-        Zobraziť moje objednávky
-      </a>
-      <a href="restaurants.php" class="btn btn-ghost" style="justify-content:center;width:100%;padding:.75rem;">
-        Objednať znova 🍕
-      </a>
-    </div>
-  </div>
-</div>
-<script>localStorage.removeItem('qb_cart');</script>
-<?php endif; ?>
 
 <?php require_once __DIR__ . '/partials/cookie-banner.php'; ?>
 <script src="../assets/js/main.js"></script>

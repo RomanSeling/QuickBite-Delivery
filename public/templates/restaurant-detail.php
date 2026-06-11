@@ -285,9 +285,15 @@ function getRestaurantEmoji2(string $kat): string {
           <div class="cart-side-total-row"><span>Medzisúčet</span><span id="sideSubtotal">0,00 €</span></div>
           <div class="cart-side-total-row"><span>Doručenie</span><span>1,99 €</span></div>
           <div class="cart-side-total-row grand"><span>Spolu</span><span id="sideTotal">0,00 €</span></div>
+          <?php if (Auth::check() && Auth::isCustomer()): ?>
           <a href="cart.php" class="btn btn-primary w-100" style="margin-top:.85rem;justify-content:center;padding:.7rem;">
             Pokračovať do košíka →
           </a>
+          <?php else: ?>
+          <a href="login.php?redirect=cart.php" class="btn btn-primary w-100" style="margin-top:.85rem;justify-content:center;padding:.7rem;">
+            Prihlásiť sa a objednať →
+          </a>
+          <?php endif; ?>
         </div>
       </div>
     </div><!-- /cart-sidebar -->
@@ -412,8 +418,33 @@ function getRestaurantEmoji2(string $kat): string {
 <?php require_once __DIR__ . '/partials/cookie-banner.php'; ?>
 <script src="../assets/js/main.js"></script>
 <script>
-// Local cart state (mirrors session, rebuilt from localStorage for instant UI)
-let cart = JSON.parse(localStorage.getItem('qb_cart') || '{}');
+const isLoggedIn = <?= (Auth::check() && Auth::isCustomer()) ? 'true' : 'false' ?>;
+
+// Guests must never see another user's cart — clear localStorage if not logged in
+if (!isLoggedIn) {
+  localStorage.removeItem('qb_cart');
+}
+
+// Local cart state — inicializujeme z PHP session (autoritatívny zdroj), nie z localStorage
+<?php
+$phpCartItems = [];
+if (Auth::check() && Auth::isCustomer()) {
+    foreach ($_SESSION['cart']['items'] ?? [] as $itemId => $item) {
+        $phpCartItems[(string)$itemId] = [
+            'id'               => (string)$item['id'],
+            'name'             => $item['name'],
+            'price'            => (float)$item['price'],
+            'qty'              => (int)$item['qty'],
+            'restauraciaId'    => (int)($item['restauracia_id'] ?? 0),
+            'restauraciaNazov' => $_SESSION['cart']['restauracia_nazov'] ?? '',
+        ];
+    }
+}
+?>
+let cart = isLoggedIn ? <?= json_encode($phpCartItems, JSON_HEX_TAG | JSON_HEX_APOS) ?> : {};
+if (isLoggedIn) {
+    localStorage.setItem('qb_cart', JSON.stringify(cart));
+}
 
 function updateCartUI() {
   const items = Object.values(cart);
@@ -478,6 +509,12 @@ function sessionUpdate(action, params) {
 
 document.querySelectorAll('.btn-add-item').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (!isLoggedIn) {
+      showToast('Pre pridanie do košíka sa musíte prihlásiť. 🔒', 'danger', 4000);
+      setTimeout(() => { window.location.href = 'login.php?redirect=' + encodeURIComponent(window.location.pathname + window.location.search); }, 1500);
+      return;
+    }
+
     const { id, name, price, restauraciaId, restauraciaNazov } = btn.dataset;
 
     // Ak košík patrí inej reštaurácii, opýtaj sa zákazníka

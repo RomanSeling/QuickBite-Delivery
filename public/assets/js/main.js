@@ -144,6 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const { id, customer, restaurant, total, status, address, note } = btn.dataset;
       const modal = document.getElementById('orderModal');
       if (!modal) return;
+      if (!modal.querySelector('#modalTitle')) return;
       modal.querySelector('#modalTitle').textContent    = 'Upraviť objednávku #' + id;
       modal.querySelector('#orderId').value             = id       || '';
       modal.querySelector('#orderCustomer').value       = customer || '';
@@ -173,6 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const orderForm = document.querySelector('#orderForm');
   if (orderForm) {
     orderForm.addEventListener('submit', (e) => {
+      if (orderForm.dataset.demoSubmit !== 'true') return;
       e.preventDefault();
       closeModal('orderModal');
       showToast('Objednávka bola uložená.', 'success');

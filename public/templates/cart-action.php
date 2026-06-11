@@ -13,6 +13,11 @@ $cartCount = function(): int {
 switch ($action) {
 
     case 'add':
+        if (!Auth::check() || !Auth::isCustomer()) {
+            echo json_encode(['ok' => false, 'auth' => false, 'msg' => 'Pre pridanie do košíka sa musíte prihlásiť.']);
+            exit;
+        }
+
         $id               = (string)($_POST['id'] ?? '');
         $name             = trim($_POST['name'] ?? '');
         $price            = (float)($_POST['price'] ?? 0);

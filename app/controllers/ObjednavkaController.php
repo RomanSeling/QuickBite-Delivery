@@ -29,10 +29,18 @@ class ObjednavkaController
         $id             = (int)($_POST['id'] ?? 0);
 
         if ($id > 0) {
-            $model->update($id, $zakaznik_id, $restauracia_id, $kurier_id, $polozky, $suma, $platba, $stav, $adresa, $poznamka);
+            $saved = $model->update($id, $zakaznik_id, $restauracia_id, $kurier_id, $polozky, $suma, $platba, $stav, $adresa, $poznamka);
+            if (!$saved) {
+                Helper::flash('danger', 'Objednavku sa nepodarilo aktualizovat.');
+                Redirect::redirect('objednavky.php');
+            }
             Helper::flash('success', 'Objednávka bola aktualizovaná.');
         } else {
-            $model->create($zakaznik_id, $restauracia_id, $kurier_id, $polozky, $suma, $platba, $stav, $adresa, $poznamka);
+            $saved = $model->create($zakaznik_id, $restauracia_id, $kurier_id, $polozky, $suma, $platba, $stav, $adresa, $poznamka);
+            if (!$saved) {
+                Helper::flash('danger', 'Objednavku sa nepodarilo ulozit.');
+                Redirect::redirect('objednavky.php');
+            }
             Helper::flash('success', 'Nová objednávka bola pridaná.');
         }
 

@@ -183,6 +183,67 @@ class Objednavka
         }
     }
 
+    public function createAndReturnId(
+        int    $zakaznik_id,
+        int    $restauracia_id,
+        ?int   $kurier_id,
+        string $polozky,
+        float  $suma,
+        string $platba,
+        string $stav,
+        string $adresa,
+        string $poznamka
+    ): int|false {
+        try {
+            $sql  = "INSERT INTO objednavky
+                        (zakaznik_id, restauracia_id, kurier_id, polozky, suma, platba, stav, adresa_dorucenia, poznamka)
+                     VALUES
+                        (:zakaznik_id, :restauracia_id, :kurier_id, :polozky, :suma, :platba, :stav, :adresa, :poznamka)";
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([
+                'zakaznik_id'    => $zakaznik_id,
+                'restauracia_id' => $restauracia_id,
+                'kurier_id'      => $kurier_id,
+                'polozky'        => $polozky,
+                'suma'           => $suma,
+                'platba'         => $platba,
+                'stav'           => $stav,
+                'adresa'         => $adresa,
+                'poznamka'       => $poznamka,
+            ]);
+
+            return (int)$this->db->lastInsertId();
+        } catch (PDOException $e) {
+            Helper::log("Objednavka::createAndReturnId ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function createItems(int $objednavka_id, array $items): bool
+    {
+        try {
+            $stmt = $this->db->prepare(
+                "INSERT INTO polozky_objednavky (objednavka_id, produkt_id, nazov, mnozstvo, cena)
+                 VALUES (:objednavka_id, :produkt_id, :nazov, :mnozstvo, :cena)"
+            );
+
+            foreach ($items as $item) {
+                $stmt->execute([
+                    'objednavka_id' => $objednavka_id,
+                    'produkt_id'    => (int)($item['id'] ?? 0) ?: null,
+                    'nazov'         => $item['name'] ?? 'Polozka',
+                    'mnozstvo'      => max(1, (int)($item['qty'] ?? 1)),
+                    'cena'          => (float)($item['price'] ?? 0),
+                ]);
+            }
+
+            return true;
+        } catch (PDOException $e) {
+            Helper::log("Objednavka::createItems ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function update(
         int    $id,
         int    $zakaznik_id,
